@@ -31,6 +31,9 @@ import {
 import type { WatcherConfig, Intent, BrandMention, Provider, ModelConfig } from '../types.ts';
 import { GEMINI_MODELS, GROQ_MODELS } from '../types.ts';
 import yaml from 'js-yaml';
+import LoginModal from '../components/modals/LoginModal';
+import RegisterModal from '../components/modals/RegisterModal';
+import ProfileIcon from '../components/ProfileIcon';
 
 const StatsComparison = ({ results, theme }: { results: any, theme: string }) => {
   if (!results || !results.intents_data) return null;
@@ -269,6 +272,27 @@ const FormattedAnswer = ({ text, mentions = [], theme }: { text: string; mention
 export default function Dashboard({ theme }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+
+  const openLoginModal = () => {
+    setIsLoginModalOpen(true);
+    setIsRegisterModalOpen(false);
+  };
+
+  const closeLoginModal = () => {
+    setIsLoginModalOpen(false);
+  };
+
+  const openRegisterModal = () => {
+    setIsRegisterModalOpen(true);
+    setIsLoginModalOpen(false);
+  };
+
+  const closeRegisterModal = () => {
+    setIsRegisterModalOpen(false);
+  };
+
 
   // Set provider from query param
   useEffect(() => {
@@ -599,6 +623,8 @@ export default function Dashboard({ theme }) {
 
   return (
     <div className={`min-h-screen ${theme === 'dark' ? 'bg-navy-950 text-white' : 'bg-gray-50 text-gray-800'}`}>
+      {isLoginModalOpen && <LoginModal onClose={closeLoginModal} onSwitchToRegister={openRegisterModal} />}
+      {isRegisterModalOpen && <RegisterModal onClose={closeRegisterModal} onSwitchToLogin={openLoginModal} />}
       {/* Background gradient */}
       <div className={`fixed inset-0 ${theme === 'dark' ? 'bg-gradient-to-br from-primary-500/5 via-transparent to-accent-500/5' : 'bg-gray-100'} pointer-events-none`} />
 
@@ -640,6 +666,7 @@ export default function Dashboard({ theme }) {
                 <Sparkles className="w-4 h-4 mr-2" />
                 Results
               </button>
+              <ProfileIcon onClick={openLoginModal} />
             </div>
           </div>
         </div>
