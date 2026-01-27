@@ -20,15 +20,19 @@ import {
   LineChart,
   MessageSquare,
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import LoginModal from '../components/modals/LoginModal';
 import RegisterModal from '../components/modals/RegisterModal';
 import ProfileIcon from '../components/ProfileIcon';
+import ApiKeysModal from '../components/modals/ApiKeysModal';
+import { useAuth } from '../contexts/AuthContext'; // Import useAuth
 
 export default function LandingPage({ theme }) {
   const navigate = useNavigate();
+  const { isAuthenticated, hasCompletedOnboarding } = useAuth(); // Use auth context
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [isApiKeysModalOpen, setIsApiKeysModalOpen] = useState(false); // New state
 
   const openLoginModal = () => {
     setIsLoginModalOpen(true);
@@ -47,6 +51,20 @@ export default function LandingPage({ theme }) {
   const closeRegisterModal = () => {
     setIsRegisterModalOpen(false);
   };
+
+  const openApiKeysModal = () => {
+    setIsApiKeysModalOpen(true);
+  };
+
+  const closeApiKeysModal = () => {
+    setIsApiKeysModalOpen(false);
+  };
+
+  const handleLoginSuccess = () => {
+    closeLoginModal();
+    navigate('/dashboard'); // Redirect to dashboard after successful login
+  };
+
   const features = [
     {
       icon: Globe,
@@ -122,8 +140,9 @@ export default function LandingPage({ theme }) {
 
   return (
     <div className={`min-h-screen ${theme === 'dark' ? 'bg-navy-950 text-white' : 'bg-gray-50 text-gray-800'}`}>
-      {isLoginModalOpen && <LoginModal onClose={closeLoginModal} onSwitchToRegister={openRegisterModal} />}
+      {isLoginModalOpen && <LoginModal onClose={closeLoginModal} onSwitchToRegister={openRegisterModal} onLoginSuccess={handleLoginSuccess} />}
       {isRegisterModalOpen && <RegisterModal onClose={closeRegisterModal} onSwitchToLogin={openLoginModal} />}
+      {isApiKeysModalOpen && <ApiKeysModal onClose={closeApiKeysModal} />}
       {/* Background effects */}
       <div className={`fixed inset-0 ${theme === 'dark' ? 'bg-gradient-to-br from-primary-500/5 via-transparent to-accent-500/5' : 'bg-gray-100'} pointer-events-none`} />
       {theme === 'dark' && (
@@ -160,7 +179,7 @@ export default function LandingPage({ theme }) {
                 Get Started
                 <ArrowRight className="w-4 h-4 ml-2 inline" />
               </button>
-              <ProfileIcon onClick={openLoginModal} />
+              <ProfileIcon onClick={() => isAuthenticated ? openApiKeysModal() : openLoginModal()} />
             </div>
           </div>
         </div>
@@ -296,7 +315,7 @@ export default function LandingPage({ theme }) {
                   {step.step}
                 </div>
                 <h3 className={`text-lg font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'} mb-2`}>{step.title}</h3>
-                <p className={`text-sm ${theme === 'dark' ? 'text-navy-400' : 'text-gray-600'}`}>{step.description}</p>
+                <p className={`${theme === 'dark' ? 'text-navy-400' : 'text-gray-600'}`}>{step.description}</p>
                 {i < steps.length - 1 && (
                   <ArrowRight className={`hidden md:block absolute top-8 -right-4 w-6 h-6 ${theme === 'dark' ? 'text-navy-600' : 'text-gray-300'} animate-pulse`} />
                 )}
@@ -456,7 +475,7 @@ export default function LandingPage({ theme }) {
             In a world where AI answers questions, the brands that get mentioned win.
           </p>
           <button onClick={openLoginModal} className="btn-primary text-lg px-10 py-5 animate-pulse-glow hover-lift">
-            <Zap className="w-5 h-5 mr-2 inline animate-pulse" />
+            <Zap className="w-5 h-5 mr-2 inline" />
             Get Started Free
             <ArrowRight className="w-5 h-5 ml-2 inline" />
           </button>

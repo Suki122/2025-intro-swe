@@ -14,12 +14,10 @@ function App() {
   return (
     <div className={`app ${theme}`}>
       <ThemeToggler theme={theme} toggleTheme={toggleTheme} />
-      <Router>
-        <Routes>
-          <Route path="/" element={<LandingPage theme={theme} />} />
-          <Route path="/app" element={<Dashboard theme={theme} />} />
-        </Routes>
-      </Router>
+      <Routes>
+        <Route path="/" element={<LandingPage theme={theme} />} />
+        <Route path="/dashboard" element={<Dashboard theme={theme} />} />
+      </Routes>
     </div>
   );
 }

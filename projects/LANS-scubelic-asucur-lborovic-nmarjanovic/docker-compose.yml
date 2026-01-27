@@ -9,6 +9,8 @@ services:
     volumes:
       # Persist output data (SQLite DB and results)
       - ./output:/app/output
+      # Mount the application code for live reloading
+      - ./llm_answer_watcher:/app/llm_answer_watcher
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped

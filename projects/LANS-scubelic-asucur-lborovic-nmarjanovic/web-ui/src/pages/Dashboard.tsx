@@ -34,6 +34,9 @@ import yaml from 'js-yaml';
 import LoginModal from '../components/modals/LoginModal';
 import RegisterModal from '../components/modals/RegisterModal';
 import ProfileIcon from '../components/ProfileIcon';
+import ApiKeysModal from '../components/modals/ApiKeysModal';
+import { useAuth } from '../contexts/AuthContext'; // Import useAuth
+import { getCurrentUser } from '../services/api'; // Import getCurrentUser
 
 const StatsComparison = ({ results, theme }: { results: any, theme: string }) => {
   if (!results || !results.intents_data) return null;
@@ -181,10 +184,9 @@ const FormattedAnswer = ({ text, mentions = [], theme }: { text: string; mention
 
   const uniqueBrands = Array.from(new Set(mentions.map(m => m.brand)));
   const sortedBrands = uniqueBrands.sort((a, b) => b.length - a.length);
-  const brandPattern = sortedBrands.length > 0
-    ? new RegExp(`(${sortedBrands.map(b => b.replace(/[.*+?^${}()|[\\]/g, '\\$&')).join('|')})`, 'gi')
-    : null;
-
+      const brandPattern = sortedBrands.length > 0
+        ? new RegExp(`(${sortedBrands.map(b => b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi')
+        : null;
   const brandMap = new Map<string, boolean>();
   mentions.forEach(m => brandMap.set(m.brand.toLowerCase(), m.is_mine));
 
@@ -208,7 +210,7 @@ const FormattedAnswer = ({ text, mentions = [], theme }: { text: string; mention
   const processText = (str: string | JSX.Element): any => {
     if (typeof str !== 'string') return str;
 
-    const parts = str.split(/(\*\*.*?\*\*)/g);
+    const parts = str.split(/(\*\*.*\*\*)/g);
     return parts.map((part, i) => {
       if (part.startsWith('**') && part.endsWith('**')) {
         const content = part.slice(2, -2);
@@ -272,8 +274,10 @@ const FormattedAnswer = ({ text, mentions = [], theme }: { text: string; mention
 export default function Dashboard({ theme }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { isAuthenticated, hasCompletedOnboarding } = useAuth(); // Use auth context
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [isApiKeysModalOpen, setIsApiKeysModalOpen] = useState(false); // New state
 
   const openLoginModal = () => {
     setIsLoginModalOpen(true);
@@ -292,6 +296,40 @@ export default function Dashboard({ theme }) {
   const closeRegisterModal = () => {
     setIsRegisterModalOpen(false);
   };
+
+  const openApiKeysModal = () => {
+    setIsApiKeysModalOpen(true);
+  };
+
+  const closeApiKeysModal = () => {
+    setIsApiKeysModalOpen(false);
+  };
+
+  const handleLoginSuccess = () => {
+    closeLoginModal();
+    navigate('/dashboard'); // Redirect to dashboard after successful login
+  };
+
+  useEffect(() => {
+    const fetchApiKeys = async () => {
+      if (isAuthenticated) {
+        const token = localStorage.getItem('token');
+        if (token) {
+          try {
+            const response = await getCurrentUser(token);
+            setApiKeys({
+              google: response.data.google_api_key || '',
+              groq: response.data.groq_api_key || '',
+            });
+          } catch (error) {
+            console.error('Failed to fetch API keys:', error);
+            // Optionally, handle error state or show a message to the user
+          }
+        }
+      }
+    };
+    fetchApiKeys();
+  }, [isAuthenticated]); // Rerun when authentication status changes
 
 
   // Set provider from query param
@@ -487,8 +525,11 @@ export default function Dashboard({ theme }) {
       }
 
       const runData = await response.json();
+      console.log('runData received:', runData); // Debug log
+      console.log('runData.run_id type:', typeof runData.run_id, 'value:', runData.run_id); // Debug log
       setRunId(runData.run_id);
 
+      // Use the directly returned run_id for fetching results
       const resultsResponse = await fetch(`${API_BASE_URL}/results/${runData.run_id}`);
       if(!resultsResponse.ok) {
         const errorData = await resultsResponse.json();
@@ -623,8 +664,10 @@ export default function Dashboard({ theme }) {
 
   return (
     <div className={`min-h-screen ${theme === 'dark' ? 'bg-navy-950 text-white' : 'bg-gray-50 text-gray-800'}`}>
-      {isLoginModalOpen && <LoginModal onClose={closeLoginModal} onSwitchToRegister={openRegisterModal} />}
+      {isLoginModalOpen && <LoginModal onClose={closeLoginModal} onSwitchToRegister={openRegisterModal} onLoginSuccess={handleLoginSuccess} />}
       {isRegisterModalOpen && <RegisterModal onClose={closeRegisterModal} onSwitchToLogin={openLoginModal} />}
+      {isApiKeysModalOpen && <ApiKeysModal onClose={closeApiKeysModal} />}
+      {isApiKeysModalOpen && <ApiKeysModal onClose={closeApiKeysModal} />}
       {/* Background gradient */}
       <div className={`fixed inset-0 ${theme === 'dark' ? 'bg-gradient-to-br from-primary-500/5 via-transparent to-accent-500/5' : 'bg-gray-100'} pointer-events-none`} />
 
@@ -666,7 +709,7 @@ export default function Dashboard({ theme }) {
                 <Sparkles className="w-4 h-4 mr-2" />
                 Results
               </button>
-              <ProfileIcon onClick={openLoginModal} />
+              <ProfileIcon onClick={() => isAuthenticated ? openApiKeysModal() : openLoginModal()} />
             </div>
           </div>
         </div>
@@ -1142,7 +1185,7 @@ export default function Dashboard({ theme }) {
                 </div>
                 <div className="space-y-8">
                   {results.intents_data.map((intentResult: any) => (
-                    <div key={intentResult.intent_id} className={`p-6 ${theme === 'dark' ? 'bg-navy-800/20' : 'bg-gray-100/50'} rounded-2xl border ${theme === 'dark' ? 'border-navy-700/40 hover:border-navy-600/60' : 'border-gray-200/40 hover:border-gray-300/60'} transition-colors`}>
+                    <div key={intentResult.intent_id} className={`p-6 ${theme === 'dark' ? 'bg-navy-800/20' : 'bg-gray-100/50'} rounded-2xl border ${theme === 'dark' ? 'border-navy-800/50 hover:border-navy-600/60' : 'border-gray-200/50 hover:border-gray-300/60'} transition-colors`}>
                       <div className="flex items-start gap-4 mb-4">
                         <div className="w-8 h-8 rounded-lg bg-primary-500/20 flex items-center justify-center shrink-0">
                           <MessageSquare className="w-4 h-4 text-primary-400" />

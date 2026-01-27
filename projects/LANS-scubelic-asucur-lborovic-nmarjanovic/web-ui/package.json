@@ -12,6 +12,7 @@
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "@types/js-yaml": "^4.0.9",
+    "axios": "^1.13.4",
     "js-yaml": "^4.1.1",
     "lucide-react": "^0.561.0",
     "react": "^19.2.0",

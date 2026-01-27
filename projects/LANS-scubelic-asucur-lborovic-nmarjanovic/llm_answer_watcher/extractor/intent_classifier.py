@@ -1,54 +1,10 @@
-"""
-Intent classification using function calling for LLM Answer Watcher.
-
-This module implements query intent classification using OpenAI's function calling API.
-It analyzes user queries to determine:
-- Intent type (transactional, informational, navigational, commercial_investigation)
-- Buyer journey stage (awareness, consideration, decision)
-- Urgency signals (high, medium, low)
-
-This enables prioritization of high-value mentions and better ROI analysis.
-
-Key features:
-- Structured classification via function calling
-- Confidence scoring for classification accuracy
-- Reasoning explanations for transparency
-- Cost tracking for extraction calls
-
-Architecture:
-    1. Build extraction client with CLASSIFY_QUERY_INTENT_FUNCTION
-    2. Call LLM with user query
-    3. LLM returns structured JSON via function calling
-    4. Validate schema and return classification result
-
-Example:
-    >>> from config.schema import RuntimeExtractionSettings
-    >>> result = await classify_intent(
-    ...     query="What are the best email warmup tools to buy now?",
-    ...     extraction_settings=settings,
-    ...     intent_id="email-warmup",
-    ...     db_path="./output/watcher.db"
-    ... )
-    >>> result.intent_type
-    'transactional'
-    >>> result.buyer_stage
-    'decision'
-    >>> result.urgency_signal
-    'high'
-"""
-
 import hashlib
 import json
 import logging
-import sqlite3
 from dataclasses import dataclass
 
 from ..config.schema import RuntimeExtractionSettings
 from ..llm_runner.models import LLMResponse, build_client
-from ..storage.db import (
-    lookup_intent_classification_cache,
-    store_intent_classification_cache,
-)
 from .function_schemas import (
     CLASSIFY_QUERY_INTENT_FUNCTION,
     validate_intent_classification_response,
@@ -206,7 +162,6 @@ async def classify_intent(
     query: str,
     extraction_settings: RuntimeExtractionSettings,
     intent_id: str,
-    db_path: str,
 ) -> IntentClassificationResult:
     """
     Classify user query intent using function calling with caching (async).
@@ -226,7 +181,6 @@ async def classify_intent(
         query: User query to classify
         extraction_settings: Extraction model config and settings
         intent_id: Intent ID for logging context
-        db_path: Path to SQLite database for cache storage
 
     Returns:
         IntentClassificationResult with classification data
@@ -242,7 +196,6 @@ async def classify_intent(
         ...     query="What are the best email warmup tools to buy now?",
         ...     extraction_settings=settings,
         ...     intent_id="email-warmup",
-        ...     db_path="./output/watcher.db"
         ... )
         >>> result1.extraction_cost_usd
         0.00011  # LLM call cost
@@ -252,7 +205,6 @@ async def classify_intent(
         ...     query="What are the best email warmup tools to buy now?",
         ...     extraction_settings=settings,
         ...     intent_id="email-warmup-2",
-        ...     db_path="./output/watcher.db"
         ... )
         >>> result2.extraction_cost_usd
         0.0  # Cache hit, no cost!
@@ -270,42 +222,6 @@ async def classify_intent(
             "Intent classification requires extraction_model to be configured. "
             "Set extraction_settings.extraction_model in config."
         )
-
-    # Compute query hash for cache lookup
-    query_hash = compute_query_hash(query)
-
-    # Check cache first
-    try:
-        with sqlite3.connect(db_path) as conn:
-            cached_result = lookup_intent_classification_cache(conn, query_hash)
-
-            if cached_result is not None:
-                logger.info(
-                    f"Intent classification cache HIT for {intent_id}: "
-                    f"{cached_result['intent_type']}/{cached_result['buyer_stage']}/{cached_result['urgency_signal']} "
-                    f"(confidence={cached_result['classification_confidence']:.2f}, saved=${cached_result['extraction_cost_usd']:.6f})"
-                )
-
-                return IntentClassificationResult(
-                    intent_type=cached_result["intent_type"],
-                    buyer_stage=cached_result["buyer_stage"],
-                    urgency_signal=cached_result["urgency_signal"],
-                    classification_confidence=cached_result[
-                        "classification_confidence"
-                    ],
-                    reasoning=cached_result["reasoning"],
-                    extraction_cost_usd=0.0,  # Cache hit = 0 cost
-                )
-
-            logger.debug(
-                f"Intent classification cache MISS for {intent_id} (query_hash={query_hash[:16]}...)"
-            )
-
-    except Exception as e:
-        logger.warning(
-            f"Cache lookup failed for {intent_id}: {e}. Proceeding with LLM call."
-        )
-        # Continue to LLM call on cache lookup failure
 
     # Build extraction client
     extraction_model = extraction_settings.extraction_model
@@ -341,32 +257,6 @@ async def classify_intent(
             f"(confidence={function_result['classification_confidence']:.2f})"
         )
 
-        # Store result in cache for future lookups
-        try:
-            with sqlite3.connect(db_path) as conn:
-                store_intent_classification_cache(
-                    conn=conn,
-                    query_hash=query_hash,
-                    query_text=query,
-                    intent_type=function_result["intent_type"],
-                    buyer_stage=function_result["buyer_stage"],
-                    urgency_signal=function_result["urgency_signal"],
-                    classification_confidence=function_result[
-                        "classification_confidence"
-                    ],
-                    reasoning=function_result.get("reasoning"),
-                    extraction_cost_usd=response.cost_usd,
-                )
-                conn.commit()
-                logger.debug(
-                    f"Stored classification result in cache for query_hash={query_hash[:16]}..."
-                )
-        except Exception as cache_error:
-            logger.warning(
-                f"Failed to cache classification result for {intent_id}: {cache_error}"
-            )
-            # Don't fail the classification if caching fails - just log warning
-
         return IntentClassificationResult(
             intent_type=function_result["intent_type"],
             buyer_stage=function_result["buyer_stage"],
@@ -381,3 +271,4 @@ async def classify_intent(
             f"Intent classification failed for {intent_id}: {e}", exc_info=True
         )
         raise RuntimeError(f"Intent classification failed for {intent_id}: {e}") from e
+

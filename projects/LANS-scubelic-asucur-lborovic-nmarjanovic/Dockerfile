@@ -32,4 +32,4 @@ RUN mkdir -p /app/output
 EXPOSE 8000
 
 # Run the FastAPI server
-CMD ["uvicorn", "llm_answer_watcher.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "llm_answer_watcher.api:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

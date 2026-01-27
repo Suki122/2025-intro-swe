@@ -1,41 +1,6 @@
-"""
-Core orchestration engine for LLM Answer Watcher.
-
-This module implements the main "run_all" function that executes the complete
-workflow: query LLMs, parse answers, write artifacts, store in database.
-
-This is the internal "POST /run" contract - OSS CLI calls it in-process,
-Cloud version will expose it over HTTP.
-
-Key responsibilities:
-- Generate run_id from current UTC timestamp
-- Create output directory structure
-- Loop through all (intent, model) combinations
-- Call LLM clients with retry logic
-- Parse answers using extractor module
-- Write JSON artifacts (raw, parsed, error files)
-- Insert data into SQLite database
-- Generate run metadata summary
-- Return structured result dict
-
-Example:
-    >>> from llm_answer_watcher.config.loader import load_config
-    >>> config = load_config("examples/watcher.config.yaml")
-    >>> result = run_all(config)
-    >>> print(result["run_id"])
-    '2025-11-02T08-00-00Z'
-    >>> print(result["total_cost_usd"])
-    0.0123
-
-Architecture:
-    This is the API-first contract. In OSS version, CLI calls this directly.
-    In Cloud version, this becomes the HTTP endpoint handler.
-"""
-
 import asyncio
 import json
 import logging
-import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
@@ -43,13 +8,6 @@ from ..config.schema import RuntimeConfig
 from ..exceptions import BudgetExceededError
 from ..extractor.intent_classifier import classify_intent
 from ..extractor.parser import parse_answer
-from ..storage.db import (
-    insert_answer_raw,
-    insert_intent_classification,
-    insert_mention,
-    insert_operation,
-    insert_run,
-)
 from ..storage.writer import (
     create_run_directory,
     write_error,
@@ -573,22 +531,6 @@ async def run_all(
     total_operations_cost_usd = 0.0  # Track operations cost separately
     errors = []
 
-    # Insert run record into database
-    try:
-        with sqlite3.connect(config.run_settings.sqlite_db_path) as conn:
-            insert_run(
-                conn=conn,
-                run_id=run_id,
-                timestamp_utc=timestamp_utc,
-                total_intents=len(config.intents),
-                total_models=total_execution_units,  # Models + runners
-            )
-            conn.commit()
-        logger.debug(f"Inserted run record: run_id={run_id}")
-    except Exception as e:
-        logger.error(f"Failed to insert run record into database: {e}", exc_info=True)
-        # Continue execution - database is not critical
-
     # Initialize semaphore for rate limiting concurrent requests
     max_concurrent = config.run_settings.max_concurrent_requests
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -682,39 +624,6 @@ async def run_all(
                         data=asdict(raw_record),
                     )
 
-                    # Insert raw answer into database
-                    try:
-                        # Serialize web search results to JSON if present
-                        web_search_json = None
-                        if response.web_search_results:
-                            web_search_json = json.dumps(response.web_search_results)
-
-                        with sqlite3.connect(config.run_settings.sqlite_db_path) as conn:
-                            insert_answer_raw(
-                                conn=conn,
-                                run_id=run_id,
-                                intent_id=intent.id,
-                                model_provider=model_config.provider,
-                                model_name=model_config.model_name,
-                                timestamp_utc=raw_record.timestamp_utc,
-                                prompt=intent.prompt,
-                                answer_text=answer_text,
-                                usage_meta_json=json.dumps(usage_meta),
-                                estimated_cost_usd=cost_usd,
-                                web_search_count=response.web_search_count,
-                                web_search_results_json=web_search_json,
-                                runner_type=raw_record.runner_type,
-                                runner_name=raw_record.runner_name,
-                                screenshot_path=raw_record.screenshot_path,
-                                html_snapshot_path=raw_record.html_snapshot_path,
-                                session_id=raw_record.session_id,
-                            )
-                            conn.commit()
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to insert answer into database: {e}", exc_info=True
-                        )
-
                     # Parse answer to extract mentions and rankings
                     extraction_result = await parse_answer(
                         answer_text=answer_text,
@@ -767,48 +676,6 @@ async def run_all(
                         model=model_config.model_name,
                         data=parsed_data,
                     )
-
-                    # Insert mentions into database
-                    all_mentions = (
-                        extraction_result.my_mentions
-                        + extraction_result.competitor_mentions
-                    )
-                    for mention in all_mentions:
-                        try:
-                            # Determine if this is my brand
-                            is_mine = mention.brand_category == "mine"
-
-                            # Find rank position if this brand is in ranked list
-                            rank_position = None
-                            for ranked in extraction_result.ranked_list:
-                                if ranked.brand_name == mention.normalized_name:
-                                    rank_position = ranked.rank_position
-                                    break
-
-                            with sqlite3.connect(
-                                config.run_settings.sqlite_db_path
-                            ) as conn:
-                                insert_mention(
-                                    conn=conn,
-                                    run_id=run_id,
-                                    timestamp_utc=raw_record.timestamp_utc,
-                                    intent_id=intent.id,
-                                    model_provider=model_config.provider,
-                                    model_name=model_config.model_name,
-                                    brand_name=mention.original_text,
-                                    normalized_name=mention.normalized_name,
-                                    is_mine=is_mine,
-                                    rank_position=rank_position,
-                                    match_type="exact",
-                                    sentiment=mention.sentiment,
-                                    mention_context=mention.mention_context,
-                                )
-                                conn.commit()
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to insert mention into database: {e}",
-                                exc_info=True,
-                            )
 
                     # Execute operations if configured
                     operations_cost_usd = 0.0
@@ -882,45 +749,6 @@ async def run_all(
                                 model=op_result.model_name,
                                 data=operation_data,
                             )
-
-                            # Insert into database
-                            try:
-                                operation = next(
-                                    (o for o in all_operations if o.id == op_id), None
-                                )
-                                with sqlite3.connect(
-                                    config.run_settings.sqlite_db_path
-                                ) as conn:
-                                    insert_operation(
-                                        conn=conn,
-                                        run_id=run_id,
-                                        intent_id=intent.id,
-                                        model_provider=op_result.model_provider,
-                                        model_name=op_result.model_name,
-                                        operation_id=op_id,
-                                        operation_description=operation.description
-                                        if operation
-                                        else None,
-                                        operation_prompt=op_result.rendered_prompt,
-                                        result_text=op_result.result_text,
-                                        tokens_used_input=op_result.tokens_used_input,
-                                        tokens_used_output=op_result.tokens_used_output,
-                                        cost_usd=op_result.cost_usd,
-                                        timestamp_utc=op_result.timestamp_utc,
-                                        depends_on=operation.depends_on
-                                        if operation
-                                        else [],
-                                        execution_order=execution_order,
-                                        skipped=op_result.skipped,
-                                        error=op_result.error,
-                                    )
-                                    conn.commit()
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to insert operation into database: {e}",
-                                    exc_info=True,
-                                )
-
                         logger.info(
                             f"Completed {len(operation_results)} operations, cost=${operations_cost_usd:.6f}"
                         )
@@ -989,40 +817,6 @@ async def run_all(
                     data=asdict(raw_record),
                 )
 
-                # Insert raw answer into database
-                try:
-                    # Serialize web search results to JSON if present
-                    web_search_json = None
-                    if result.web_search_results:
-                        web_search_json = json.dumps(result.web_search_results)
-
-                    with sqlite3.connect(config.run_settings.sqlite_db_path) as conn:
-                        insert_answer_raw(
-                            conn=conn,
-                            run_id=run_id,
-                            intent_id=intent.id,
-                            model_provider=result.provider,
-                            model_name=result.model_name,
-                            timestamp_utc=raw_record.timestamp_utc,
-                            prompt=intent.prompt,
-                            answer_text=result.answer_text,
-                            usage_meta_json=json.dumps(raw_record.usage_meta),
-                            estimated_cost_usd=result.cost_usd,
-                            web_search_count=raw_record.web_search_count,
-                            web_search_results_json=web_search_json,
-                            runner_type=result.runner_type,
-                            runner_name=result.runner_name,
-                            screenshot_path=result.screenshot_path,
-                            html_snapshot_path=result.html_snapshot_path,
-                            session_id=result.session_id,
-                        )
-                        conn.commit()
-                except Exception as e:
-                    logger.error(
-                        f"Failed to insert runner answer into database: {e}",
-                        exc_info=True,
-                    )
-
                 # Parse answer to extract mentions and rankings
                 extraction_result = await parse_answer(
                     answer_text=result.answer_text,
@@ -1042,48 +836,6 @@ async def run_all(
                     model=result.model_name,
                     data=asdict(extraction_result),
                 )
-
-                # Insert mentions into database
-                all_mentions = (
-                    extraction_result.my_mentions
-                    + extraction_result.competitor_mentions
-                )
-                for mention in all_mentions:
-                    try:
-                        # Determine if this is my brand
-                        is_mine = mention.brand_category == "mine"
-
-                        # Find rank position if this brand is in ranked list
-                        rank_position = None
-                        for ranked in extraction_result.ranked_list:
-                            if ranked.brand_name == mention.normalized_name:
-                                rank_position = ranked.rank_position
-                                break
-
-                        with sqlite3.connect(
-                            config.run_settings.sqlite_db_path
-                        ) as conn:
-                            insert_mention(
-                                conn=conn,
-                                run_id=run_id,
-                                timestamp_utc=raw_record.timestamp_utc,
-                                intent_id=intent.id,
-                                model_provider=result.provider,
-                                model_name=result.model_name,
-                                brand_name=mention.original_text,
-                                normalized_name=mention.normalized_name,
-                                is_mine=is_mine,
-                                rank_position=rank_position,
-                                match_type="exact",
-                                sentiment=mention.sentiment,
-                                mention_context=mention.mention_context,
-                            )
-                            conn.commit()
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to insert runner mention into database: {e}",
-                            exc_info=True,
-                        )
 
                 # Calculate total cost for this query
                 total_query_cost = result.cost_usd + extraction_result.extraction_cost_usd
@@ -1106,7 +858,7 @@ async def run_all(
 
                 # Call progress callback if provided
                 if progress_callback:
-                    if hasattr(progress_callback, "complete_query"):
+                    if hasattr(progress_callback, "complete__query"):
                         await progress_callback.complete_query(query_key, success=True)
                     else:
                         progress_callback()
@@ -1195,36 +947,7 @@ async def run_all(
                     query=intent.prompt,
                     extraction_settings=config.extraction_settings,
                     intent_id=intent.id,
-                    db_path=config.run_settings.sqlite_db_path,
                 )
-
-                # Store classification in database
-                try:
-                    with sqlite3.connect(config.run_settings.sqlite_db_path) as conn:
-                        insert_intent_classification(
-                            conn=conn,
-                            run_id=run_id,
-                            intent_id=intent.id,
-                            intent_type=classification_result.intent_type,
-                            buyer_stage=classification_result.buyer_stage,
-                            urgency_signal=classification_result.urgency_signal,
-                            classification_confidence=classification_result.classification_confidence,
-                            timestamp_utc=utc_timestamp(),
-                            reasoning=classification_result.reasoning,
-                            extraction_cost_usd=classification_result.extraction_cost_usd,
-                        )
-                        conn.commit()
-                    logger.info(
-                        f"Intent classification stored: {intent.id} -> "
-                        f"{classification_result.intent_type}/{classification_result.buyer_stage}/"
-                        f"{classification_result.urgency_signal} "
-                        f"(confidence={classification_result.classification_confidence:.2f})"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to insert intent classification into database: {e}",
-                        exc_info=True,
-                    )
 
                 # Track classification cost
                 intent_classification_cost = classification_result.extraction_cost_usd
